@@ -1,0 +1,29 @@
+{
+    "project_info": {
+        "project_number": "891579140465",
+        "project_id": "smarthomeautomation-3d999",
+        "storage_bucket": "smarthomeautomation-3d999.appspot.com"
+    },
+    "client": [
+        {
+            "client_info": {
+                "mobilesdk_app_id": "1:891579140465:web:dummy_web_app_id",
+                "android_client_info": {
+                    "package_name": "com.smarthomeautomation.app"
+                }
+            },
+            "oauth_client": [],
+            "api_key": [
+                {
+                    "current_key": "AIzaSyAgD7L2p3y2bw9nvOj_H46X7EBJLZMw_lI"
+                }
+            ],
+            "services": {
+                "appinvite_service": {
+                    "other_platform_oauth_client": []
+                }
+            }
+        }
+    ],
+    "configuration_version": "1"
+}

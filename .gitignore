@@ -1,0 +1,55 @@
+# General
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Android
+*.apk
+*.ap_
+*.dex
+/mobile_app/android/local.properties
+/mobile_app/.gradle/
+
+# iOS
+/mobile_app/ios/Flutter/Generated.xcconfig
+/mobile_app/ios/Flutter/app.flx
+/mobile_app/ios/Flutter/app.zip
+/mobile_app/ios/Flutter/flutter_assets/
+/mobile_app/ios/Runner/GeneratedPluginRegistrant.h
+/mobile_app/ios/Runner/GeneratedPluginRegistrant.m
+
+# Firmware
+/firmware/build/
+*.bin
+*.hex
+*.elf

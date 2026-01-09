@@ -26,6 +26,7 @@ class VoiceService {
       _isInitialized = await _speechToText.initialize(
         onStatus: _onStatus,
         onError: (error) => _onError(error.errorMsg),
+        debugLogging: true, 
       );
 
       if (kDebugMode) {
@@ -76,7 +77,8 @@ class VoiceService {
       listenFor: const Duration(seconds: 30),
       pauseFor: const Duration(seconds: 5),
       partialResults: true,
-      localeId: 'en_US',
+      cancelOnError: false, 
+      listenMode: ListenMode.search,
     );
 
     _isListening = true;
@@ -135,43 +137,35 @@ class VoiceService {
   }
 
   static String? _extractDeviceCommand(String text) {
-    final isTurnOn = text.contains('turn on');
-    final isTurnOff = text.contains('turn off');
+    final isTurnOn = text.contains('turn on') || text.contains('switch on') || text.contains('start');
+    final isTurnOff = text.contains('turn off') || text.contains('switch off') || text.contains('stop');
 
     if (!isTurnOn && !isTurnOff) return null;
 
-    // Extract device name
-    String deviceName = '';
-
-    // Check for explicit relay commands like "relay 1" or "relay1"
-    final relayRegex = RegExp(r'relay\s*(\d)');
-    final relayMatch = relayRegex.firstMatch(text);
-    if (relayMatch != null) {
-      final relayNumber = relayMatch.group(1);
-      if (relayNumber != null) {
-        final relayId = 'relay$relayNumber';
-        return '${isTurnOn ? 'turn_on' : 'turn_off'}_$relayId';
-      }
+    final action = isTurnOn ? 'turn_on' : 'turn_off';
+    
+    // Clean the text to just the target
+    // e.g. "turn on the kitchen light please" -> "kitchen light please"
+    // We'll strip common prefixes
+    String target = text;
+    if (isTurnOn) {
+        target = target.replaceAll(RegExp(r'turn on|switch on|start'), '').trim();
+    } else {
+        target = target.replaceAll(RegExp(r'turn off|switch off|stop'), '').trim();
     }
-
-    // Common device patterns
-    if (text.contains('light') || text.contains('lights')) {
-      deviceName = 'light';
-    } else if (text.contains('fan')) {
-      deviceName = 'fan';
-    } else if (text.contains('ac') || text.contains('air conditioner')) {
-      deviceName = 'ac';
-    } else if (text.contains('tv') || text.contains('television')) {
-      deviceName = 'tv';
-    } else if (text.contains('door') || text.contains('lock')) {
-      deviceName = 'lock';
+    
+    // Remove "the"
+    if (target.startsWith('the ')) {
+        target = target.substring(4).trim();
     }
-
-    if (deviceName.isNotEmpty) {
-      return '${isTurnOn ? 'turn_on' : 'turn_off'}_$deviceName';
-    }
-
-    return null;
+    
+    // Remove "please"
+    target = target.replaceAll('please', '').trim();
+    
+    if (target.isEmpty) return null;
+    
+    // Return action_target
+    return '${action}_$target';
   }
 
   static String? _extractSceneCommand(String text) {
@@ -217,13 +211,14 @@ class VoiceService {
   // Voice command processing methods for external use
   static Map<String, dynamic>? parseDeviceCommand(String command) {
     if (command.startsWith('turn_on_') || command.startsWith('turn_off_')) {
-      final parts = command.split('_');
-      if (parts.length >= 2) {
-        return {
-          'action': parts[0] == 'turn_on' ? 'turn_on' : 'turn_off',
-          'device_type': parts[1],
-        };
-      }
+      final isTurnOn = command.startsWith('turn_on_');
+      final prefix = isTurnOn ? 'turn_on_' : 'turn_off_';
+      final deviceType = command.substring(prefix.length);
+      
+      return {
+        'action': isTurnOn ? 'turn_on' : 'turn_off',
+        'device_type': deviceType,
+      };
     } else if (command.startsWith('set_temperature_')) {
       final parts = command.split('_');
       if (parts.length >= 3) {

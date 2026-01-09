@@ -43,9 +43,17 @@ void main() async {
     // Initialize voice service
     await VoiceService.initialize();
 
-    // Initialize background service
+    // Initialize background service with error handling
     if (!kIsWeb) {
-      await initializeService();
+      try {
+        await initializeService();
+      } catch (e) {
+        debugPrint('Warning: Background Service failed to start: $e');
+        // Continue app load even if service fails
+      }
+    } else {
+      // Start automation service in foreground for Web
+      startWebAutomationService();
     }
 
     // Initialize shared preferences

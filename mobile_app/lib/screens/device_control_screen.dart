@@ -39,7 +39,7 @@ class _DeviceControlScreenState extends State<DeviceControlScreen> {
     final deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
 
     if (_device.type == 'relay') {
-      await deviceProvider.controlRelay(_device.name, action == 'turn_on');
+      await deviceProvider.controlRelay(_device.id, action == 'turn_on');
     } else {
       // Handle other device types here
     }
@@ -51,6 +51,36 @@ class _DeviceControlScreenState extends State<DeviceControlScreen> {
     }
   }
 
+  void _showRenameDialog() {
+    final controller = TextEditingController(text: _device.name);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename Device'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(labelText: 'Device Name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (controller.text.isNotEmpty) {
+                 Provider.of<DeviceProvider>(context, listen: false)
+                     .renameDevice(_device.id, controller.text);
+                 Navigator.pop(context);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -58,6 +88,10 @@ class _DeviceControlScreenState extends State<DeviceControlScreen> {
         title: Text(_device.name),
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.edit),
+            onPressed: _showRenameDialog,
+          ),
           Container(
             margin: const EdgeInsets.only(right: 16),
             width: 12,

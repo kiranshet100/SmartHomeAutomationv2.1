@@ -56,117 +56,69 @@ class VoiceCommandHandler {
   }
 
   static void _handleTurnOnCommand(Map<String, dynamic> command, String token) {
-    final deviceType = command['device_type'];
-
-    // If the command targets a specific relay (e.g., 'relay1'), call controlRelay
-    if (deviceType != null &&
-        deviceType.toString().toLowerCase().startsWith('relay')) {
-      final relayId = deviceType.toString().toLowerCase();
-      // Relay mapping: allow 'fan' and 'light' mapping to specific relays
-      // but here user targeted specific relay id
-      _deviceProvider!.controlRelay(relayId, true);
-      _showFeedback('Turned on $relayId');
-      return;
+    var targetName = command['device_type']?.toString().toLowerCase() ?? '';
+    
+    // Find device by fuzzy name
+    // 1. Exact ID Match (e.g. 'relay1')
+    // 2. Exact Name Match (case insensitive)
+    // 3. Partial Name Match
+    
+    final allDevices = _deviceProvider!.devices;
+    
+    // Check for "All"
+    if (targetName.contains('all lights')) { _controlAllDevicesOfType('light', true); return; }
+    if (targetName.contains('all fans')) { _controlAllDevicesOfType('fan', true); return; }
+    
+    Device? bestMatch;
+    
+    try {
+        bestMatch = allDevices.firstWhere((d) => d.id.toLowerCase() == targetName || d.name.toLowerCase() == targetName);
+    } catch (e) {
+        // No exact match
+        try {
+            bestMatch = allDevices.firstWhere((d) => d.name.toLowerCase().contains(targetName));
+        } catch (e) {
+            // No partial match
+        }
     }
-
-    // Support named device shortcuts mapped to relays: try dynamic lookup first
-    if (deviceType == 'fan' || deviceType == 'light') {
-      final searchTerm = deviceType.toString().toLowerCase();
-      final matched = _deviceProvider!.devices.firstWhere(
-        (d) => d.type == 'relay' && d.name.toLowerCase().contains(searchTerm),
-        orElse: () => Device(
-          id: '',
-          name: '',
-          type: '',
-          room: '',
-          isOnline: false,
-          isActive: false,
-          properties: {},
-          lastUpdated: DateTime.now(),
-        ),
-      );
-      if (matched.id.isNotEmpty) {
-        _deviceProvider!.controlRelay(matched.name.toLowerCase(), true);
-        _showFeedback('Turned on ${deviceType} (${matched.name})');
-        return;
-      }
-
-      // Fallback to shortcut mapping if dynamic lookup fails
-      final fallbackRelay = _shortcutRelayMap[searchTerm];
-      if (fallbackRelay != null) {
-        _deviceProvider!.controlRelay(fallbackRelay, true);
-        _showFeedback('Turned on ${deviceType} (${fallbackRelay})');
-        return;
-      }
+    
+    if (bestMatch != null) {
+        _deviceProvider!.controlRelay(bestMatch.id, true);
+        _showFeedback('Turned on ${bestMatch.name}');
+    } else {
+        _showFeedback('Could not find device named "$targetName"');
     }
-
-    // Fallback: control by device.type matching
-    final devices = _deviceProvider!.devices
-        .where((device) => device.type == deviceType && !device.isActive)
-        .toList();
-
-    for (final device in devices) {
-      _deviceProvider!.controlDevice(device.id, 'turn_on', {}, token);
-    }
-
-    // Show feedback
-    _showFeedback('Turned on ${devices.length} $deviceType device(s)');
   }
 
   static void _handleTurnOffCommand(
       Map<String, dynamic> command, String token) {
-    final deviceType = command['device_type'];
-
-    if (deviceType != null &&
-        deviceType.toString().toLowerCase().startsWith('relay')) {
-      final relayId = deviceType.toString().toLowerCase();
-      _deviceProvider!.controlRelay(relayId, false);
-      _showFeedback('Turned off $relayId');
-      return;
+    var targetName = command['device_type']?.toString().toLowerCase() ?? '';
+    
+    final allDevices = _deviceProvider!.devices;
+    
+    // Check for "All"
+    if (targetName.contains('all lights')) { _controlAllDevicesOfType('light', false); return; }
+    if (targetName.contains('all fans')) { _controlAllDevicesOfType('fan', false); return; }
+    
+    Device? bestMatch;
+    
+    try {
+        bestMatch = allDevices.firstWhere((d) => d.id.toLowerCase() == targetName || d.name.toLowerCase() == targetName);
+    } catch (e) {
+        // No exact match
+        try {
+            bestMatch = allDevices.firstWhere((d) => d.name.toLowerCase().contains(targetName));
+        } catch (e) {
+            // No partial match
+        }
     }
-
-    // Support named device shortcuts mapped to relays: try dynamic lookup first
-    if (deviceType == 'fan' || deviceType == 'light') {
-      final searchTerm = deviceType.toString().toLowerCase();
-      final matched = _deviceProvider!.devices.firstWhere(
-        (d) => d.type == 'relay' && d.name.toLowerCase().contains(searchTerm),
-        orElse: () => Device(
-          id: '',
-          name: '',
-          type: '',
-          room: '',
-          isOnline: false,
-          isActive: false,
-          properties: {},
-          lastUpdated: DateTime.now(),
-        ),
-      );
-      if (matched.id.isNotEmpty) {
-        _deviceProvider!.controlRelay(matched.name.toLowerCase(), false);
-        _showFeedback('Turned off ${deviceType} (${matched.name})');
-        return;
-      }
-
-      // Fallback to shortcut mapping if dynamic lookup fails
-      final fallbackRelayOff = _shortcutRelayMap[searchTerm];
-      if (fallbackRelayOff != null) {
-        _deviceProvider!.controlRelay(fallbackRelayOff, false);
-        _showFeedback('Turned off ${deviceType} (${fallbackRelayOff})');
-        return;
-      }
+    
+    if (bestMatch != null) {
+        _deviceProvider!.controlRelay(bestMatch.id, false);
+        _showFeedback('Turned off ${bestMatch.name}');
+    } else {
+        _showFeedback('Could not find device named "$targetName"');
     }
-
-    // Fallback: control by device.type matching
-    final devices = _deviceProvider!.devices
-        .where((device) => device.type == deviceType && device.isActive)
-        .toList();
-
-    for (final device in devices) {
-      _deviceProvider!.controlDevice(device.id, 'turn_off', {}, token);
-    }
-
-    // Show feedback
-    _showFeedback('Turned off ${devices.length} $deviceType device(s)');
   }
 
   static void _handleTemperatureCommand(

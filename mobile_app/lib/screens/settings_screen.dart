@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/auth_provider.dart' as custom_auth;
@@ -6,6 +7,9 @@ import '../providers/device_provider.dart';
 import '../providers/theme_provider.dart';
 import '../models/device_model.dart';
 import 'automation_screen.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../services/notification_service.dart';
+import 'notification_settings_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -16,7 +20,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _notificationsEnabled = true;
-  String _selectedLanguage = 'English';
   double _energyTariff = 8.0;
 
   @override
@@ -35,6 +38,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _saveTariff(double tariff) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('energy_tariff', tariff);
+    
+    // Update Firebase
+    try {
+      await FirebaseDatabase.instance
+          .ref('devices/esp32_device_01/energy/cost_per_kWh')
+          .set(tariff);
+    } catch (e) {
+      print('Error updating tariff in Firebase: $e');
+    }
+
     setState(() {
       _energyTariff = tariff;
     });
@@ -142,6 +155,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
             const SizedBox(height: 8),
 
+            // Custom Alerts Shortcut
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: ListTile(
+                leading: const Icon(Icons.add_alert),
+                title: const Text('Custom Alerts'),
+                subtitle: const Text('Create specific sensor notifications'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => const NotificationSettingsScreen(),
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            // Test Notifications
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: ListTile(
+                leading: const Icon(Icons.notification_important, color: Colors.blue),
+                title: const Text('Test Notification'),
+                subtitle: const Text('Verify notifications are working'),
+                onTap: () {
+                   // This assumes NotificationService is available or we can use a simpler test
+                   // Better to try invoking it directly if possible, or just print
+                   // Actually, we can use the provider or static instance if setup
+                   final service = NotificationService(); // Singleton
+                   service.showNotification(
+                     title: 'Test Notification',
+                     body: 'If you see this, notifications are working! 🔔',
+                     importance: Importance.max,
+                     priority: Priority.max
+                   );
+                   
+                   ScaffoldMessenger.of(context).showSnackBar(
+                     const SnackBar(content: Text('Test notification sent')),
+                   );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
             // Dark Mode
             Consumer<ThemeProvider>(
               builder: (context, themeProvider, child) {
@@ -171,14 +238,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: ListTile(
-                leading: const Icon(Icons.language),
-                title: const Text('Language'),
-                subtitle: Text(_selectedLanguage),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  _showLanguageDialog();
-                },
+              child: const ListTile(
+                leading: Icon(Icons.language),
+                title: Text('Language'),
+                subtitle: Text('English (Default)'),
               ),
             ),
 
@@ -425,45 +488,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showLanguageDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Language'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              title: const Text('English'),
-              leading: Radio<String>(
-                value: 'English',
-                groupValue: _selectedLanguage,
-                onChanged: (value) {
-                  setState(() {
-                    _selectedLanguage = value!;
-                  });
-                  Navigator.of(context).pop();
-                },
-              ),
-            ),
-            ListTile(
-              title: const Text('Spanish'),
-              leading: Radio<String>(
-                value: 'Spanish',
-                groupValue: _selectedLanguage,
-                onChanged: (value) {
-                  setState(() {
-                    _selectedLanguage = value!;
-                  });
-                  Navigator.of(context).pop();
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+
 
   void _showAboutDialog() {
     showAboutDialog(

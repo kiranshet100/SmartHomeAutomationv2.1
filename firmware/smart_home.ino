@@ -1,195 +1,252 @@
 #include <WiFi.h>
-#include <PubSubClient.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include <DHT.h>
 
-// Pin definitions
-#define DHTPIN 4
-#define PIRPIN 5
-#define LDRPIN 6
-#define MQ2PIN 7
-#define WATERPIN 8
-#define RELAY1 9
-#define RELAY2 10
-#define RELAY3 11
-#define RELAY4 12
-#define STATUS_LED 13
-#define WIFI_LED 14
-#define ALERT_LED 15
+// ================= WIFI & FIREBASE =================
+const char* WIFI_SSID  = "YOUR_WIFI_SSID";
+const char* WIFI_PASS  = "YOUR_WIFI_PASSWORD";
 
-// Sensor type
-#define DHTTYPE DHT22
+const char* FIREBASE_HOST = "https://YOUR_PROJECT_ID.firebaseio.com";
+const char* FIREBASE_AUTH = "YOUR_FIREBASE_SECRET";
+const char* DEVICE_ID     = "esp32_device_01";
 
-// WiFi credentials
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+// ================= PINS =================
+#define RELAY_1 25   // Light (ACTIVE LOW)
+#define RELAY_2 26   // Fan   (ACTIVE LOW)
 
-// MQTT broker details
-const char* mqtt_server = "YOUR_MQTT_BROKER_IP";
-const int mqtt_port = 1883;
-const char* mqtt_user = "YOUR_MQTT_USER";
-const char* mqtt_pass = "YOUR_MQTT_PASSWORD";
+#define GAS_SENSOR 34
+#define PIR_SENSOR 32
+#define DHT_PIN    33
+#define DHT_TYPE   DHT11
 
-// MQTT topics
-const char* topic_sensor = "home/sensors";
-const char* topic_control = "home/control";
-const char* topic_alert = "home/alert";
+DHT dht(DHT_PIN, DHT_TYPE);
 
-// Device ID
-const char* device_id = "esp32_001";
-
-// Objects
-WiFiClient espClient;
-PubSubClient client(espClient);
-DHT dht(DHTPIN, DHTTYPE);
-
-// Variables
-float temperature = 0;
-float humidity = 0;
-int motion = 0;
-int light_level = 0;
-int gas_level = 0;
-int water_level = 0;
+// ================= STATES =================
 bool relay1_state = false;
 bool relay2_state = false;
-bool relay3_state = false;
-bool relay4_state = false;
 
-unsigned long lastSensorRead = 0;
-const long sensorInterval = 5000; // 5 seconds
+int gasLevel = 0;
+bool motionDetected = false;
+bool lastMotionState = false;
+uint32_t motionCount = 0;
 
+float temperature = 0;
+float humidity = 0;
+
+// ================= ENERGY CONFIG =================
+#define RELAY1_WATTS 60.0f     // Light power
+#define RELAY2_WATTS 75.0f     // Fan power
+#define COST_PER_KWH 6.5f      // ₹ per unit
+
+float relay1_Wh = 0.0f;
+float relay2_Wh = 0.0f;
+
+unsigned long lastEnergyUpdate = 0;
+unsigned long lastEnergyPush   = 0;
+const unsigned long energyPushInterval = 5000;
+
+// ================= TIMING =================
+unsigned long lastSensorRead   = 0;
+unsigned long lastFirebasePoll = 0;
+
+const unsigned long sensorInterval       = 1500;
+const unsigned long firebasePollInterval = 300;
+
+// ================= FIREBASE URL =================
+String firebaseUrl(String path) {
+  String url = String(FIREBASE_HOST) + "/" + path + ".json";
+  if (strlen(FIREBASE_AUTH) > 0) {
+    url += "?auth=" + String(FIREBASE_AUTH);
+  }
+  return url;
+}
+
+// ================= WIFI =================
+void connectWiFi() {
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("Connecting WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi Connected");
+}
+
+// ================= RELAY CONTROL =================
+void setRelayState(int relay, bool on) {
+  if (relay == 1) {
+    relay1_state = on;
+    digitalWrite(RELAY_1, on ? LOW : HIGH);
+  }
+  if (relay == 2) {
+    relay2_state = on;
+    digitalWrite(RELAY_2, on ? LOW : HIGH);
+  }
+}
+
+// ================= PUSH RELAYS =================
+void pushRelaysToFirebase() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  StaticJsonDocument<128> doc;
+  doc["relay1"] = relay1_state ? 1 : 0;
+  doc["relay2"] = relay2_state ? 1 : 0;
+  doc["timestamp"] = millis();
+
+  String body;
+  serializeJson(doc, body);
+
+  HTTPClient http;
+  http.begin(firebaseUrl("devices/" + String(DEVICE_ID) + "/relays"));
+  http.addHeader("Content-Type", "application/json");
+  http.PUT(body);
+  http.end();
+}
+
+// ================= FETCH RELAYS =================
+void fetchAndApplyRelayStates() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  http.begin(firebaseUrl("devices/" + String(DEVICE_ID) + "/relays"));
+  int code = http.GET();
+
+  if (code == 200) {
+    StaticJsonDocument<256> doc;
+    deserializeJson(doc, http.getString());
+
+    bool r1 = (doc["relay1"] == 1);
+    bool r2 = (doc["relay2"] == 1);
+
+    if (r1 != relay1_state) setRelayState(1, r1);
+    if (r2 != relay2_state) setRelayState(2, r2);
+  }
+  http.end();
+}
+
+// ================= SENSORS =================
+void readSensors() {
+  gasLevel = map(analogRead(GAS_SENSOR), 0, 4095, 0, 100);
+
+  bool motion = digitalRead(PIR_SENSOR);
+  motionDetected = motion;
+  if (motion && !lastMotionState) motionCount++;
+  lastMotionState = motion;
+
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+  if (!isnan(t)) temperature = t;
+  if (!isnan(h)) humidity = h;
+}
+
+// ================= PUSH SENSORS =================
+void pushSensors() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  StaticJsonDocument<256> doc;
+  doc["temperature"] = temperature;
+  doc["humidity"]    = humidity;
+  doc["gasLevel"]    = gasLevel;
+  doc["motion"]      = motionDetected ? 1 : 0;
+  doc["motionCount"] = motionCount;
+
+  String body;
+  serializeJson(doc, body);
+
+  HTTPClient http;
+  http.begin(firebaseUrl("devices/" + String(DEVICE_ID) + "/sensors"));
+  http.addHeader("Content-Type", "application/json");
+  http.PUT(body);
+  http.end();
+}
+
+// ================= ENERGY CALCULATION =================
+void updateEnergyUsage(unsigned long now) {
+  if (lastEnergyUpdate == 0) {
+    lastEnergyUpdate = now;
+    return;
+  }
+
+  unsigned long dt = now - lastEnergyUpdate;
+  if (dt == 0) return;
+
+  float hours = dt / 3600000.0f;
+
+  if (relay1_state) relay1_Wh += RELAY1_WATTS * hours;
+  if (relay2_state) relay2_Wh += RELAY2_WATTS * hours;
+
+  lastEnergyUpdate = now;
+}
+
+// ================= PUSH ENERGY =================
+void pushEnergyToFirebase() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  float total_Wh  = relay1_Wh + relay2_Wh;
+  float total_kWh = total_Wh / 1000.0f;
+  float cost      = total_kWh * COST_PER_KWH;
+
+  StaticJsonDocument<256> doc;
+  doc["relay1_Wh"] = relay1_Wh;
+  doc["relay2_Wh"] = relay2_Wh;
+  doc["total_Wh"]  = total_Wh;
+  doc["total_kWh"] = total_kWh;
+  doc["cost_per_kWh"] = COST_PER_KWH;
+  doc["estimatedCost"] = cost;
+  doc["timestamp"] = millis();
+
+  String body;
+  serializeJson(doc, body);
+
+  HTTPClient http;
+  http.begin(firebaseUrl("devices/" + String(DEVICE_ID) + "/energy"));
+  http.addHeader("Content-Type", "application/json");
+  http.PUT(body);
+  http.end();
+}
+
+// ================= SETUP =================
 void setup() {
   Serial.begin(115200);
 
-  // Initialize pins
-  pinMode(PIRPIN, INPUT);
-  pinMode(LDRPIN, INPUT);
-  pinMode(MQ2PIN, INPUT);
-  pinMode(WATERPIN, INPUT);
-  pinMode(RELAY1, OUTPUT);
-  pinMode(RELAY2, OUTPUT);
-  pinMode(RELAY3, OUTPUT);
-  pinMode(RELAY4, OUTPUT);
-  pinMode(STATUS_LED, OUTPUT);
-  pinMode(WIFI_LED, OUTPUT);
-  pinMode(ALERT_LED, OUTPUT);
+  pinMode(RELAY_1, OUTPUT);
+  pinMode(RELAY_2, OUTPUT);
+  digitalWrite(RELAY_1, HIGH);
+  digitalWrite(RELAY_2, HIGH);
 
-  // Initialize relays (off)
-  digitalWrite(RELAY1, HIGH);
-  digitalWrite(RELAY2, HIGH);
-  digitalWrite(RELAY3, HIGH);
-  digitalWrite(RELAY4, HIGH);
+  pinMode(PIR_SENSOR, INPUT);
+  pinMode(GAS_SENSOR, INPUT);
 
-  // Initialize DHT sensor
   dht.begin();
-
-  // Connect to WiFi
-  setup_wifi();
-
-  // Setup MQTT
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
-
-  // Status LED
-  digitalWrite(STATUS_LED, HIGH);
+  connectWiFi();
 }
 
+// ================= LOOP =================
 void loop() {
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
+  unsigned long now = millis();
 
-  unsigned long currentMillis = millis();
+  updateEnergyUsage(now);
 
-  // Read sensors every 5 seconds
-  if (currentMillis - lastSensorRead >= sensorInterval) {
+  if (now - lastSensorRead >= sensorInterval) {
     readSensors();
-    publishSensorData();
-    lastSensorRead = currentMillis;
+    pushSensors();
+    lastSensorRead = now;
   }
 
-  // Check for alerts
-  checkAlerts();
-
-  delay(100);
-}
-
-void setup_wifi() {
-  delay(10);
-  Serial.println("Connecting to WiFi...");
-  WiFi.begin(ssid, password);
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  if (now - lastFirebasePoll >= firebasePollInterval) {
+    fetchAndApplyRelayStates();
+    lastFirebasePoll = now;
   }
 
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-  digitalWrite(WIFI_LED, HIGH);
-}
-
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-
-  String message = "";
-  for (int i = 0; i < length; i++) {
-    message += (char)payload[i];
+  if (now - lastEnergyPush >= energyPushInterval) {
+    pushEnergyToFirebase();
+    lastEnergyPush = now;
   }
-  Serial.println(message);
 
-  // Parse control commands
-  if (String(topic) == topic_control) {
-    parseControlCommand(message);
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == '1') { setRelayState(1, !relay1_state); pushRelaysToFirebase(); }
+    if (c == '2') { setRelayState(2, !relay2_state); pushRelaysToFirebase(); }
   }
 }
-
-void reconnect() {
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    if (client.connect(device_id, mqtt_user, mqtt_pass)) {
-      Serial.println("connected");
-      client.subscribe(topic_control);
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(5000);
-    }
-  }
-}
-
-void readSensors() {
-  // Read DHT22
-  temperature = dht.readTemperature();
-  humidity = dht.readHumidity();
-
-  // Read PIR
-  motion = digitalRead(PIRPIN);
-
-  // Read LDR
-  light_level = analogRead(LDRPIN);
-
-  // Read MQ2
-  gas_level = analogRead(MQ2PIN);
-
-  // Read Water Level
-  water_level = analogRead(WATERPIN);
-
-  // Print readings
-  Serial.println("Sensor Readings:");
-  Serial.print("Temperature: "); Serial.println(temperature);
-  Serial.print("Humidity: "); Serial.println(humidity);
-  Serial.print("Motion: "); Serial.println(motion);
-  Serial.print("Light: "); Serial.println(light_level);
-  Serial.print("Gas: "); Serial.println(gas_level);
-  Serial.print("Water: "); Serial.println(water_level);
-}
-
-void publishSensorData() {
-  String payload = "{";
-  payload += "\"device_id\":\"" + String(device_id) + "\",";
-  payload += "\"temperature\":

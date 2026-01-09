@@ -19,21 +19,28 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  StreamSubscription<String>? _voiceCommandSubscription;
-  bool _isListening = false;
+
+
+  StreamSubscription? _voiceStatusSubscription;
 
   @override
   void initState() {
     super.initState();
-    // Listen for voice commands
-    _voiceCommandSubscription = VoiceService.commandStream.listen((command) {
-      _handleVoiceCommand(command);
+    _voiceStatusSubscription = VoiceService.statusStream.listen((status) {
+      if (status.startsWith('Error:') || status == 'notListening') {
+         // Optionally filter specific statuses if 'notListening' is too spammy
+         if(status.startsWith('Error:')) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(status), backgroundColor: Colors.red),
+            );
+         }
+      }
     });
   }
 
   @override
   void dispose() {
-    _voiceCommandSubscription?.cancel();
+    _voiceStatusSubscription?.cancel();
     super.dispose();
   }
 
@@ -47,19 +54,22 @@ class _HomeScreenState extends State<HomeScreen> {
         foregroundColor: Theme.of(context).colorScheme.onSurface,
         actions: [
           IconButton(
-            icon: Icon(
-              _isListening ? Icons.mic : Icons.mic_none,
-              color: _isListening ? Colors.red : null,
+            icon: StreamBuilder<String>(
+              stream: VoiceService.statusStream,
+              builder: (context, snapshot) {
+                final isListening = VoiceService.isListening;
+                return Icon(
+                   isListening ? Icons.mic : Icons.mic_none,
+                  color: isListening ? Colors.red : null,
+                );
+              }
             ),
             onPressed: () async {
-              if (_isListening) {
+              if (VoiceService.isListening) {
                 await VoiceService.stopListening();
               } else {
                 await VoiceService.startListening();
               }
-              setState(() {
-                _isListening = !_isListening;
-              });
             },
           ),
           IconButton(
@@ -419,19 +429,16 @@ class _HomeScreenState extends State<HomeScreen> {
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2, // 3 cols for Tablet (Bigger)
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
-                childAspectRatio: 1.2,
+                childAspectRatio: MediaQuery.of(context).size.width > 600 ? 0.9 : 0.65, // Taller ratios
               ),
               itemCount: relays.length,
               itemBuilder: (context, index) {
-                return AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  child: _buildDeviceCard(relays[index],
-                      key: ValueKey(relays[index].id)),
-                );
+                final device = relays[index];
+                return _buildDeviceCard(device);
               },
             ),
           ],
@@ -441,6 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildDeviceCard(Device device, {Key? key}) {
+    final bool isActive = device.isActive;
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(
@@ -456,94 +464,116 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: device.isOnline
-                          ? Theme.of(context)
-                              .colorScheme
-                              .primary
-                              .withOpacity(0.1)
-                          : Colors.grey.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      _getDeviceIcon(device.type),
-                      size: 24,
-                      color: device.isOnline
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context)
-                              .colorScheme
-                              .onBackground
-                              .withOpacity(0.5),
-                    ),
+          padding: const EdgeInsets.all(12.0),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
                   ),
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: device.isOnline ? Colors.green : Colors.red,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                device.name,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                device.room,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onBackground
-                          .withOpacity(0.6),
-                    ),
-              ),
-              const Spacer(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    device.isActive ? 'ON' : 'OFF',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: device.isActive ? Colors.green : Colors.red,
-                          fontWeight: FontWeight.w600,
+                  child: IntrinsicHeight(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.max, // Expand to fill IntrinsicHeight
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween, // Push content apart
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Top Row: Icon + Status Dot
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? Theme.of(context).primaryColor.withOpacity(0.1)
+                                    : Theme.of(context).disabledColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Icon(
+                                _getDeviceIcon(device.type),
+                                color: isActive
+                                    ? Theme.of(context).primaryColor
+                                    : Theme.of(context).disabledColor,
+                                size: 28,
+                              ),
+                            ),
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: device.isOnline ? Colors.green : Colors.red,
+                              ),
+                            ),
+                          ],
                         ),
+                        // Middle: Text Info
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                device.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.visible,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                device.room,
+                                style: TextStyle(
+                                  color: Theme.of(context).textTheme.bodySmall?.color,
+                                  fontSize: 12,
+                                ),
+                                maxLines: 1,
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Bottom: Switch
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              isActive ? 'ON' : 'OFF',
+                              style: TextStyle(
+                                color: isActive ? Theme.of(context).primaryColor : Colors.grey,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                            Transform.scale(
+                              scale: 0.9,
+                              child: Switch(
+                                value: isActive,
+                                onChanged: device.isOnline
+                                    ? (value) async {
+                                        final deviceProvider = Provider.of<DeviceProvider>(
+                                            context,
+                                            listen: false);
+                                        await deviceProvider.controlRelay(
+                                            device.id, value);
+                                      }
+                                    : null,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                  Switch(
-                    value: device.isActive,
-                    onChanged: device.isOnline
-                        ? (value) async {
-                            final deviceProvider = Provider.of<DeviceProvider>(
-                                context,
-                                listen: false);
-                            await deviceProvider.controlRelay(
-                                device.name, value);
-                          }
-                        : null,
-                  ),
-                ],
-              ),
-            ],
+                ),
+              );
+            },
           ),
         ),
       ),
-      key: key,
     );
   }
 
@@ -920,72 +950,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Implement actual emergency call functionality
   }
 
-  void _handleVoiceCommand(String command) {
-    final deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
-    final parsedCommand = VoiceService.parseDeviceCommand(command);
 
-    if (parsedCommand == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not understand the command.')),
-      );
-      return;
-    }
-
-    final String action = parsedCommand['action'];
-    final String deviceIdentifier = parsedCommand['device_type'];
-    String message = '';
-
-    if (action == 'turn_on' || action == 'turn_off') {
-      Device? targetDevice;
-
-      try {
-        targetDevice = deviceProvider.devices.firstWhere((d) {
-          final dName = d.name.toLowerCase();
-          final dId = d.id.toLowerCase();
-          final identifier = deviceIdentifier.toLowerCase();
-
-          if (identifier.startsWith('relay')) {
-            return d.type == 'relay' && dId.endsWith('-$identifier');
-          }
-
-          return dName == identifier;
-        });
-      } catch (e) {
-        targetDevice = null;
-      }
-
-      if (targetDevice != null && targetDevice.isOnline) {
-        deviceProvider.controlRelay(targetDevice.name, action == 'turn_on');
-        message =
-            '${action == 'turn_on' ? 'Turned on' : 'Turned off'} ${targetDevice.name}';
-      } else if (targetDevice != null && !targetDevice.isOnline) {
-        message = 'Device "${targetDevice.name}" is offline.';
-      } else {
-        message = 'Device "$deviceIdentifier" not found.';
-      }
-    } else if (action == 'set_temperature') {
-      final temperature = parsedCommand['temperature'];
-      final thermostat = deviceProvider.devices.firstWhere(
-        (d) => d.type.toLowerCase() == 'thermostat' && d.isOnline,
-        orElse: () => deviceProvider.devices.first,
-      );
-
-      if (thermostat.id.isNotEmpty) {
-        // deviceProvider.controlDevice(thermostat.id, 'set_temperature', {'temperature': temperature}, token);
-        message = 'Set temperature to ${temperature}°C';
-      }
-    } else if (action == 'activate_scene') {
-      final scene = parsedCommand['scene'];
-      message = 'Activated ${scene} scene';
-      // TODO: Implement scene activation
-    }
-
-    if (message.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
-    }
-  }
 }
 
 class AnimatedStatCard extends StatefulWidget {

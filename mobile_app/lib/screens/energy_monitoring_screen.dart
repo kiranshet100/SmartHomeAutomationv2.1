@@ -156,8 +156,9 @@ class _EnergyMonitoringScreenState extends State<EnergyMonitoringScreen> {
           final energyData =
               Map<String, dynamic>.from(snapshot.data!.snapshot.value as Map);
           totalKwh = (energyData['total_kWh'] ?? 0).toDouble();
-          estimatedCost = (energyData['estimatedCost'] ?? 0).toDouble();
           costPerKwh = (energyData['cost_per_kWh'] ?? 8).toDouble();
+          // Calculate cost locally for immediate feedback when tariff changes
+          estimatedCost = totalKwh * costPerKwh;
         }
 
         return Row(

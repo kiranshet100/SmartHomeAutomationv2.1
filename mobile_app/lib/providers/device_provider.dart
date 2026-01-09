@@ -111,11 +111,20 @@ class DeviceProvider with ChangeNotifier {
         }
       }
 
-      // Map specific relay keys to friendly names
+      // map relay keys to friendly names
       String displayName = key.toString();
-      final lowerKey = key.toString().toLowerCase();
-      if (lowerKey == 'relay2') displayName = 'fan';
-      if (lowerKey == 'relay4') displayName = 'light';
+      
+      // Check for name in separate 'names' node
+      if (data.containsKey('names') && 
+          data['names'] is Map && 
+          (data['names'] as Map).containsKey(key)) {
+        displayName = data['names'][key].toString();
+      } else {
+        // Fallback checks
+        final lowerKey = key.toString().toLowerCase();
+        if (lowerKey == 'relay2') displayName = 'Fan';
+        if (lowerKey == 'relay4') displayName = 'Light';
+      }
 
       print(
           'Parsed device: $displayName (key: $key), isActive: $isActive, wattage: $wattage');
@@ -150,21 +159,16 @@ class DeviceProvider with ChangeNotifier {
     return devices;
   }
 
-  Future<void> controlRelay(String relayId, bool isOn) async {
+  Future<void> controlRelay(String deviceId, bool isOn) async {
     try {
-      // Resolve device either by friendly name (e.g., 'fan') or by relay key (e.g., 'relay2')
+      // Resolve device strictly by ID
       Device device = _devices.firstWhere(
-        (d) =>
-            d.type == 'relay' && d.name.toLowerCase() == relayId.toLowerCase(),
-        orElse: () => _devices.firstWhere(
-            (d) =>
-                d.type == 'relay' &&
-                d.id.toLowerCase().endsWith('-' + relayId.toLowerCase()),
-            orElse: () => throw Exception('Device not found')),
+        (d) => d.id == deviceId,
+        orElse: () => throw Exception('Device not found: $deviceId'),
       );
 
-      // Update local device state immediately for instant UI feedback
-      final deviceIndex = _devices.indexWhere((d) => d.id == device.id);
+      // Update local device state immediately for instant UI feedback (Optimistic Update)
+      final deviceIndex = _devices.indexWhere((d) => d.id == deviceId);
       if (deviceIndex != -1) {
         final now = DateTime.now();
         _devices[deviceIndex] = _devices[deviceIndex].copyWith(
@@ -175,28 +179,42 @@ class DeviceProvider with ChangeNotifier {
         );
       }
 
-      // Notify UI immediately
+      // Notify UI immediately (smoothness)
       notifyListeners();
 
-      // Track energy usage with the updated local device state
+      // Track energy usage
       await _initializeEnergyService();
-
-      // Get the updated device from our local list
       final currentDevice = _devices[deviceIndex];
       await _energyService?.updateDeviceState(currentDevice, isOn);
-
-      // Sync energy service devices with updated local devices
       _energyService?.updateDevices(_devices);
 
-      // Determine the relay key to write to Firebase (the original key is the last segment of id)
+      // Determine the relay key to write to Firebase
+      // ID format is usually "deviceId-relayKey"
       final parts = device.id.split('-');
-      final originalKey = parts.isNotEmpty ? parts.last : relayId;
+      final originalKey = parts.last;
+      
+      print('Setting Relay: $originalKey to ${isOn ? 1 : 0}');
       await _devicesRef.child('relays').child(originalKey).set(isOn ? 1 : 0);
 
-      // Final notify to ensure all UI components update
-      notifyListeners();
+      // Final notify is handled by the Firebase listener, but good to ensure valid state
     } catch (e) {
       _error = 'Failed to control relay: $e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> renameDevice(String deviceId, String newName) async {
+    try {
+      final device = _devices.firstWhere((d) => d.id == deviceId);
+      final parts = device.id.split('-');
+      final originalKey = parts.last;
+
+      // Store name in a separate 'names' node to avoid conflict with relay state (int)
+      await _devicesRef.child('names').child(originalKey).set(newName);
+      
+      // No need to manually notify, the listener will pick up the change
+    } catch (e) {
+      _error = 'Failed to rename: $e';
       notifyListeners();
     }
   }

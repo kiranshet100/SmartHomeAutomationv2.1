@@ -21,13 +21,13 @@ class Scene {
 
   factory Scene.fromJson(Map<String, dynamic> json) {
     return Scene(
-      id: json['id'],
-      name: json['name'],
-      icon: json['icon'],
-      color: json['color'],
-      description: json['description'],
-      devices: List<String>.from(json['devices']),
-      actions: Map<String, dynamic>.from(json['actions']),
+      id: json['id'] ?? '',
+      name: json['name'] ?? 'Unnamed Scene',
+      icon: json['icon'] ?? '57746', // Default to lightbulb icon code point
+      color: json['color'] ?? '4280391411', // Default to blue
+      description: json['description'] ?? '',
+      devices: json['devices'] != null ? List<String>.from(json['devices']) : [],
+      actions: json['actions'] != null ? Map<String, dynamic>.from(json['actions']) : {},
       trigger: json['trigger'] != null ? Map<String, dynamic>.from(json['trigger']) : null,
     );
   }

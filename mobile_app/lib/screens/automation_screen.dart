@@ -46,7 +46,13 @@ class _AutomationScreenState extends State<AutomationScreen> {
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final scenes = snapshot.data!;
+        final allScenes = snapshot.data ?? [];
+        // Filter out notification-only scenes. Safe check for actions.
+        final scenes = allScenes.where((s) {
+            if (s.actions == null) return true; // Keep it if we can't determine (or maybe hide? let's keep to be safe)
+            return !s.actions.containsKey('notify');
+        }).toList();
+        
         if (scenes.isEmpty) {
           return const Center(child: Text('No scenes created yet.'));
         }
@@ -172,11 +178,13 @@ class _AutomationScreenState extends State<AutomationScreen> {
     List<String> selectedDevices = [];
     String selectedIcon = 'lightbulb'; // Default icon
     Color selectedColor = Colors.blue;
+    String _selectedAction = 'Turn On';
     String? _selectedTrigger = 'time';
     TimeOfDay _selectedTime = TimeOfDay.now();
     String? _selectedSensor;
     String _selectedCondition = '>';
     final valueController = TextEditingController();
+    final messageController = TextEditingController();
 
     final deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
     final availableDevices = deviceProvider.devices.where((d) => d.type == 'relay').toList();
@@ -316,6 +324,27 @@ class _AutomationScreenState extends State<AutomationScreen> {
 
                 const SizedBox(height: 16),
 
+                // Action Selection
+                const Text('Action:', style: TextStyle(fontWeight: FontWeight.w500)),
+                DropdownButton<String>(
+                  value: _selectedAction,
+                  isExpanded: true,
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedAction = newValue!;
+                    });
+                  },
+                  items: <String>['Turn On', 'Turn Off']
+                      .map<DropdownMenuItem<String>>((String value) {
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Text(value),
+                    );
+                  }).toList(),
+                ),
+
+                const SizedBox(height: 16),
+
                 // Trigger Selection
                 const Text('Trigger:', style: TextStyle(fontWeight: FontWeight.w500)),
                 DropdownButton<String>(
@@ -354,18 +383,20 @@ class _AutomationScreenState extends State<AutomationScreen> {
                       DropdownButton<String>(
                         value: _selectedSensor,
                         hint: const Text('Select Sensor'),
+                        isExpanded: true,
                         onChanged: (String? newValue) {
                           setState(() {
                             _selectedSensor = newValue;
                           });
                         },
-                        items: availableSensors
-                            .map<DropdownMenuItem<String>>((Device value) {
-                          return DropdownMenuItem<String>(
-                            value: value.id,
-                            child: Text(value.name),
-                          );
-                        }).toList(),
+                         items: availableSensors.isNotEmpty 
+                            ? availableSensors.map<DropdownMenuItem<String>>((Device value) {
+                                return DropdownMenuItem<String>(
+                                  value: value.id,
+                                  child: Text(value.name),
+                                );
+                              }).toList()
+                            : [],
                       ),
                       Row(
                         children: [
@@ -376,7 +407,7 @@ class _AutomationScreenState extends State<AutomationScreen> {
                                 _selectedCondition = newValue!;
                               });
                             },
-                            items: <String>['>', '<', '=']
+                            items: <String>['>', '<', '=', '>=', '<=']
                                 .map<DropdownMenuItem<String>>((String value) {
                               return DropdownMenuItem<String>(
                                 value: value,
@@ -408,19 +439,46 @@ class _AutomationScreenState extends State<AutomationScreen> {
             ),
             ElevatedButton(
               onPressed: () {
-                if (nameController.text.isNotEmpty &&
-                    descriptionController.text.isNotEmpty &&
-                    selectedDevices.isNotEmpty) {
+                // Validation Logic
+                bool isValid = true;
+                if (nameController.text.isEmpty || descriptionController.text.isEmpty) {
+                   isValid = false;
+                }
+                
+                // If action is Device Control (On/Off), we NEED devices.
+                if ((_selectedAction == 'Turn On' || _selectedAction == 'Turn Off') && selectedDevices.isEmpty) {
+                   isValid = false;
+                }
+                
+                // If action is Notification, we NEED a message.
+                if (_selectedAction == 'Send Notification' && messageController.text.isEmpty) {
+                   isValid = false;
+                }
+
+                if (isValid) {
                   Map<String, dynamic>? trigger;
                   if (_selectedTrigger == 'time') {
-                    trigger = {'type': 'time', 'time': _selectedTime.format(context)};
+                    trigger = {'type': 'time', 'time': '${_selectedTime.hour}:${_selectedTime.minute}'};
                   } else if (_selectedTrigger == 'sensor') {
+                    if (_selectedSensor == null || valueController.text.isEmpty) {
+                       ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Please select a sensor and enter a value')),
+                      );
+                      return;
+                    }
                     trigger = {
                       'type': 'sensor',
                       'sensorId': _selectedSensor,
                       'condition': _selectedCondition,
                       'value': double.parse(valueController.text),
                     };
+                  }
+
+                  final Map<String, dynamic> actions = {};
+                  if (_selectedAction == 'Turn On') {
+                    actions['turn_on'] = true;
+                  } else if (_selectedAction == 'Turn Off') {
+                    actions['turn_off'] = true;
                   }
 
                   _saveScene(
@@ -430,12 +488,13 @@ class _AutomationScreenState extends State<AutomationScreen> {
                     icon: iconOptions.entries.firstWhere((element) => element.key == selectedIcon).value.codePoint.toString(),
                     color: selectedColor.value.toString(),
                     trigger: trigger,
+                    actions: actions,
                   );
                   Navigator.of(context).pop();
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Please fill all required fields and select at least one device'),
+                      content: Text('Please fill all required fields'),
                       backgroundColor: Colors.red,
                     ),
                   );
@@ -455,6 +514,7 @@ class _AutomationScreenState extends State<AutomationScreen> {
     required List<String> devices,
     required String icon,
     required String color,
+    required Map<String, dynamic> actions,
     Map<String, dynamic>? trigger,
   }) {
     final scene = Scene(
@@ -464,7 +524,7 @@ class _AutomationScreenState extends State<AutomationScreen> {
       devices: devices,
       icon: icon,
       color: color,
-      actions: {'turn_on': true},
+      actions: actions,
       trigger: trigger,
     );
     _databaseService.saveScene(scene);

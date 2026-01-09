@@ -76,14 +76,16 @@ class NotificationService {
   }) async {
     const AndroidNotificationDetails androidPlatformChannelSpecifics =
         AndroidNotificationDetails(
-      'smart_home_channel',
-      'Smart Home Alerts',
-      channelDescription: 'Notifications for smart home alerts and updates',
+      'smart_home_alerts',
+      'Emergency & Custom Alerts',
+      channelDescription: 'Important notifications for gas, fire, and custom triggers',
       importance: Importance.max,
       priority: Priority.high,
       showWhen: true,
       enableVibration: true,
       playSound: true,
+      fullScreenIntent: true,
+      category: AndroidNotificationCategory.alarm,
       icon: '@mipmap/ic_launcher',
     );
 
